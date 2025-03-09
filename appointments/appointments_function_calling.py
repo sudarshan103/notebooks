@@ -3,14 +3,25 @@ from openai_utils import get_completion_with_function_calling
 import json
 
 prompt = f"""
-You are an assistant at AI clinic, helping a user to book an appointment with a doctor at date and time as per the doctor's availability
+You are an assistant working in year 2025, helping a user to book an appointment with a service provider at date and time as per the provider's availability.
+While diplaying provider, consider him as a Doctor in this use case & do not diplay him as a 'provider'.
 Follow these rules:
-- Make sure user provides date and doctor name both.
-- If a user provides a doctor, date but no time, list all available time slots for the date using get_available_slots function.
-- If a user provides a doctor, date, time check the doctor availability using check_availability function.
-- if availability is true, confirm appointments before finalizing.
-- if availability is false, list all available time slots regardless of date using get_available_slots function.
-- Show the time in 12 hour format, skip seconds part.
+- Make sure the user provides the provider name and future date both as a basic input to process further.
+- When the provider name is provided by user, query the system by calling get_matching_provider_names, check the provider name matches the most to any of the outcome item, if matches consider that as a valid input & use provider id field for further usage, else ask user for provider name again.
+- When the provider id is determined, show user with his name & service details before asking further inputs.
+- When the provider id is determined and date and time inputs are also provided, call check_availability function.
+- If the provider id is determined and user provided a date without time, show all the available time slots as options for that date and provider id using get_available_slots function.
+- Show time slots only when user has not provided the time value or check_availability outcome is false.
+- Whenever the time slots are listed, always list them as numbered options, ask user to choose one of the option's number.
+- Whenever the time slot options are shown, process associated slot with user chosen number as an input for datetime, if user provides number from listed ones, confirm the booking.
+- Whenever the user rejects a provided time slot (e.g., says "No" or declines in any way), do not consider the date input, ask for new date and show all the available time slots as options for new date and provider id using get_available_slots function.
+- If the user asks for alternative slots, immediately call get_available_slots(provider_id, date=null), fetch all available slots, and display them in a numbered format.
+- If the user provides a new date or time, process that input instead of fetching all slots.
+- If check_availability outcome is true, confirm appointment before finalizing.
+- If check_availability outcome is false, call the get_available_slots function with determined provider_id and date as null, show all the available time slots as per the function response.
+- While showing the time slots, show the dates in format '13 Jan 2025, 01:00pm' with the time in 12 hour format, skip the seconds part.
+- While showing the time slots, skip dates part when the date input was provided and corresponding slots were available.
+- If the user selects a time from the available options, proceed with booking instead of checking availability again.
 """
 
 conversation_base =  [  
@@ -20,56 +31,75 @@ conversation_base =  [
 
 conversation = conversation_base.copy()
 
-def get_available_slots(provider_name, date=None):
+def get_matching_provider_names(provider_name):
     cursor = db.cursor(dictionary=True)
     
     query = """
-        SELECT ss.available_date, ss.available_time 
-        FROM service_slots ss
-        JOIN service_providers sp ON ss.provider_id = sp.id
+        SELECT sp.id, sp.name, sp.service
+        FROM service_providers sp
         WHERE sp.name LIKE %s
     """
     
     params = [f"%{provider_name}%"]
     
+    cursor.execute(query, tuple(params))
+    provider_names = cursor.fetchall()
+    cursor.close()
+    
+    return provider_names
+
+
+def get_available_slots(provider_id, date=None):
+    cursor = db.cursor(dictionary=True)
+
+    query = """
+        SELECT ss.available_date, ss.available_time 
+        FROM service_slots ss
+        JOIN service_providers sp ON ss.provider_id = sp.id
+        WHERE sp.id = %s
+    """
+    
+    params = [provider_id]
+
     if date:
         query += " AND ss.available_date = %s"
         params.append(date)
-    
+
     cursor.execute(query, tuple(params))
+    
+    # Print the actual executed query
+    # print("Executing Query:", cursor.statement)
+
     slots = cursor.fetchall()
     cursor.close()
-    
-    return slots if slots else []
+
+    return slots
 
 
-def check_availability(provider_name, date, time):
-    
+
+def check_availability(provider_id, date, time):
     cursor = db.cursor(dictionary=True)
     query = """
-        SELECT COUNT(*) as count 
-        FROM service_slots ss
-        JOIN service_providers sp ON ss.provider_id = sp.id
-        WHERE sp.name LIKE %s AND ss.available_date = %s AND ss.available_time = %s
-    """
-
-    provider_name_like = f"%{provider_name}%"
-
-    cursor.execute(query, (provider_name_like, date, time))
+            SELECT COUNT(*) as count 
+            FROM service_slots ss
+            JOIN service_providers sp ON ss.provider_id = sp.id
+            WHERE sp.id = %s AND ss.available_date = %s AND ss.available_time = %s
+        """
+    cursor.execute(query, (provider_id, date, time))
     result = cursor.fetchone()
     cursor.close()
     
     return result["count"] > 0
 
+
 functions=[
-            {
-                "name": "get_available_slots",
-                "description": "Fetch available time slots for a doctor",
+             {
+                "name": "get_matching_provider_names",
+                "description": "Fetch available doctor names to match the one being queried by user",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "provider_name": {"type": "string", "description": "Doctor's name"},
-                        "date": {"type": "string", "format": "date", "description": "Appointment date (YYYY-MM-DD) optional"}
+                        "provider_name": {"type": "string", "description": "Doctor's name"}
                     },
                     "required": ["provider_name"] 
                 },
@@ -77,7 +107,27 @@ functions=[
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "description": "Available time slot in HH:MM:SS format (24-hour format)."
+                        "description": "Available provider with its id, name & service offering"
+                    },
+                    "description": "A list of matching provider names from system. Returns an empty list if no names are matching."
+                }
+            },
+            {
+                "name": "get_available_slots",
+                "description": "Fetch available time slots for a doctor",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "provider_id": {"type": "integer", "description": "Doctor's id"},
+                        "date": {"type": "string", "format": "date", "description": "Appointment date (YYYY-MM-DD) optional"}
+                    },
+                    "required": ["provider_id"] 
+                },
+                "response": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "description": "Available time slot in YYYY-MM-DD HH:MM:SS format (24-hour format)."
                     },
                     "description": "A list of available time slots for the provider. Returns an empty list if no slots are available."
                 }
@@ -88,9 +138,9 @@ functions=[
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "provider_name": {
-                            "type": "string",
-                            "description": "The name of the doctor or service provider."
+                        "provider_id": {
+                            "type": "integer",
+                            "description": "The id of the doctor or service provider."
                         },
                         "date": {
                             "type": "string",
@@ -100,9 +150,9 @@ functions=[
                         "time": {
                             "type": "string",
                             "description": "The appointment time in HH:MM:SS format (24-hour format)."
-                        }
+                        } 
                     },
-                    "required": ["provider_name", "date", "time"]
+                    "required": ["provider_id", "date", "time"]
                 },
                 "response": {
                     "type": "boolean",
@@ -121,16 +171,20 @@ def handle_user_input(user_input):
         conversation = trim_messages(conversation)
         bot_response = get_completion_with_function_calling(conversation, functions)
 
-        if "function_call" in bot_response:
-            function_name = bot_response["function_call"]["name"]
-            function_args = json.loads(bot_response["function_call"]["arguments"])
+        if bot_response.function_call:
+            function_name = bot_response.function_call.name
+            function_args = json.loads(bot_response.function_call.arguments)
 
+
+            if function_name == "get_matching_provider_names":
+                function_response = get_matching_provider_names(**function_args)
+                conversation.append({'role': 'function', 'name': function_name, "content": json.dumps(function_response, default=str)})
             if function_name == "get_available_slots":
                 function_response = get_available_slots(**function_args)
                 conversation.append({'role': 'function', 'name': function_name, "content": json.dumps(function_response, default=str)})
-            elif function_name == "check_availability":
+            if function_name == "check_availability":
                 function_response = check_availability(**function_args)
-                conversation.append({'role': 'function', 'name': function_name, "content": function_response})
+                conversation.append({'role': 'function', 'name': function_name, "content": json.dumps(function_response, default=str)})
         else:
             conversation.append({'role':'assistant', 'content':bot_response.content})
             break
