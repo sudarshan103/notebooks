@@ -38,3 +38,19 @@ def get_completion_from_messages(messages, model="gpt-3.5-turbo", temperature=0)
     except Exception as e:
         print(f"Error: {e}")
         return None
+    
+
+def get_completion_with_function_calling(messages, functions, model="gpt-3.5-turbo", temperature=0):
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            functions=functions,
+            temperature=temperature,
+            function_call="auto"
+        )
+        return response.choices[0].message
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return None

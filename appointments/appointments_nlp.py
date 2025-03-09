@@ -1,17 +1,10 @@
 
-
-import os
-from dotenv import load_dotenv
-
-import mysql.connector
 import spacy
 from openai_utils import get_completion_from_messages
 import re
 from datetime import datetime, timedelta
 import dateparser
-
-load_dotenv('/home/sudarshan/notebooks/local.env' )
-
+from appointment_utils import db
 
 
 messages =  [  
@@ -27,16 +20,8 @@ messages =  [
 ]
 
 
-db = mysql.connector.connect(
-    host="localhost",
-    user=os.getenv('MYSQL_USERNAME'),
-    password=os.getenv('MYSQL_PASSWORD'),
-    database="appointments"
-)
-
 nlp = spacy.load("en_core_web_sm")
 
-from datetime import datetime
 
 def get_available_slots(provider_name, date):
     if isinstance(date, datetime):
