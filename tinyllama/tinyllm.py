@@ -14,7 +14,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto"  # Automatically uses GPU if available
 )
 
-def ask_tinyllama(prompt, max_new_tokens=50, temperature=0.7, top_p=0.9):
+def ask_tinyllama(prompt, max_new_tokens=100, temperature=0.7, top_p=0.9):
     """
     Generates a response from TinyLlama for a given prompt.
     """
